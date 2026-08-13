@@ -1,0 +1,46 @@
+{
+  "name": "portakal-lite",
+  "version": "0.0.1",
+  "description": "Standalone TSC/TSPL2 + ZPL II label compiler with SVG preview and receipt layout helpers. Zero dependencies, no transport layer — you get a printer-ready string.",
+  "keywords": [
+    "printer",
+    "label-printer",
+    "thermal-printer",
+    "tsc",
+    "tspl",
+    "zpl",
+    "label",
+    "receipt",
+    "typescript",
+    "zero-dependency"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "etiket": ">=0.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}
