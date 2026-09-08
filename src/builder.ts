@@ -174,19 +174,33 @@ export class LabelBuilder {
 
     this.validateElementNumbers();
 
+    const rawMarginNum = typeof this.config.margin === "number" ? this.config.margin : undefined;
+    const rawMarginObj =
+      typeof this.config.margin === "object" && this.config.margin !== null ? this.config.margin : undefined;
+
+    const rawTop = rawMarginObj?.top ?? rawMarginNum ?? 0;
+    const rawBottom = rawMarginObj?.bottom ?? rawMarginNum ?? 0;
+    const rawLeft = rawMarginObj?.left ?? rawMarginNum ?? 0;
+    const rawRight = rawMarginObj?.right ?? rawMarginNum ?? 0;
+
     return {
       widthDots,
       heightDots,
       dpi,
       fontBase: this.config.fontBase ?? defaultFontBase(dpi),
       font0Mode: this.config.font0Mode ?? "multiplier",
-      charWidthFactor: this.config.charWidthFactor ?? 0.6,
-      gapDots: this.config.gap != null ? toDots(this.config.gap, unit, dpi) : toDots(3, "mm", dpi),
-      marginDots: this.config.margin != null ? toDots(this.config.margin, unit, dpi) : 0,
-      speed,
-      density,
-      direction,
-      copies,
+      charWidthFactor: this.config.charWidthFactor ?? 0.5,
+      gapDots: this.config.gap != null ? toDots(this.config.gap, unit, dpi) : undefined,
+      marginDots: typeof this.config.margin === "number" ? toDots(this.config.margin, unit, dpi) : 0,
+      marginTopDots: toDots(rawTop, unit, dpi),
+      marginBottomDots: toDots(rawBottom, unit, dpi),
+      marginLeftDots: toDots(rawLeft, unit, dpi),
+      marginRightDots: toDots(rawRight, unit, dpi),
+      speed: this.config.speed,
+      density: this.config.density,
+      direction: this.config.direction,
+      copies: this.config.copies,
+      lineEnding: this.config.lineEnding ?? "\n",
       elements: this.elements,
     };
   }

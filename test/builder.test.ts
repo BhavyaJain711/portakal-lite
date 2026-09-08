@@ -12,11 +12,28 @@ describe("label builder", () => {
     expect(resolved.widthDots).toBe(320); // 40 * 203 / 25.4
     expect(resolved.heightDots).toBe(240); // 30 * 203 / 25.4
     expect(resolved.dpi).toBe(203);
+    expect(resolved.gapDots).toBeUndefined();
+    expect(resolved.speed).toBeUndefined();
+    expect(resolved.density).toBeUndefined();
+    expect(resolved.direction).toBeUndefined();
+    expect(resolved.copies).toBeUndefined();
+  });
+
+  it("resolves custom gap, speed, density, direction, copies when defined", () => {
+    const resolved = label({
+      width: 40,
+      height: 30,
+      gap: 3,
+      speed: 4,
+      density: 8,
+      direction: 0,
+      copies: 2,
+    }).resolve();
     expect(resolved.gapDots).toBe(24); // 3mm default
     expect(resolved.speed).toBe(4);
     expect(resolved.density).toBe(8);
     expect(resolved.direction).toBe(0);
-    expect(resolved.copies).toBe(1);
+    expect(resolved.copies).toBe(2);
   });
 
   it("supports unit inch and dot", () => {
@@ -83,5 +100,26 @@ describe("label builder", () => {
     expect(() =>
       label({ width: 40, height: 30 }).box({ x: 0, y: 0, width: NaN, height: 10 }).resolve(),
     ).toThrow(InvalidConfigError);
+  });
+
+  it("resolves 4-directional margins correctly", () => {
+    // Single number margin
+    const resolvedNum = label({ width: 40, height: 30, margin: 2 }).resolve();
+    expect(resolvedNum.marginDots).toBe(16);
+    expect(resolvedNum.marginTopDots).toBe(16);
+    expect(resolvedNum.marginBottomDots).toBe(16);
+    expect(resolvedNum.marginLeftDots).toBe(16);
+    expect(resolvedNum.marginRightDots).toBe(16);
+
+    // Object with individual directions
+    const resolvedObj = label({
+      width: 40,
+      height: 30,
+      margin: { top: 1, bottom: 2, left: 3, right: 4 },
+    }).resolve();
+    expect(resolvedObj.marginTopDots).toBe(8);
+    expect(resolvedObj.marginBottomDots).toBe(16);
+    expect(resolvedObj.marginLeftDots).toBe(24);
+    expect(resolvedObj.marginRightDots).toBe(32);
   });
 });

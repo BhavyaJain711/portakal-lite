@@ -54,5 +54,7 @@ export type {
   ReverseOptions,
   Rotation,
   TextOptions,
+  TSCTextFont,
   Unit,
 } from "./types.js";
+export { TSC_DOT_FONTS } from "./types.js";

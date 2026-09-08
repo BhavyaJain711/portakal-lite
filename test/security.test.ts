@@ -57,7 +57,7 @@ describe("TSC command injection hardening", () => {
     const output = tsc.compile(label({ width: 40, height: 30 }).text(payload, { x: 10, y: 10 }));
 
     // The injection payload is fully neutralized inside a single quoted string
-    const textLine = output.split("\r\n").find((l) => l.startsWith("TEXT "))!;
+    const textLine = output.split("\n").find((l) => l.startsWith("TEXT "))!;
     expect(textLine).not.toMatch(/[\r\n]/);
     // Each CR/LF became one space; quotes became apostrophes
     expect(textLine).toBe('TEXT 10,10,"2",0,1,1,"foo\'  CLS  PRINT 999  \'bar"');
@@ -70,7 +70,7 @@ describe("TSC command injection hardening", () => {
     const output = tsc.compile(
       label({ width: 40, height: 30 }).text('a"b\nc', { x: 10, y: 10, maxWidth: 300 }),
     );
-    const blockLine = output.split("\r\n").find((l) => l.startsWith("BLOCK "))!;
+    const blockLine = output.split("\n").find((l) => l.startsWith("BLOCK "))!;
     expect(blockLine).not.toMatch(/[\r\n]/);
     expect(blockLine).toBe('BLOCK 10,10,300,300,"2",0,1,1,0,1,"a\'b c"');
   });
@@ -151,7 +151,7 @@ describe("barcode/QR command injection hardening", () => {
     const out = tsc.compile(
       label({ width: 40, height: 30 }).barcode('a"\r\nPRINT 999\r\n', { x: 10, y: 10 }),
     );
-    const barcodeLine = out.split("\r\n").find((l) => l.startsWith("BARCODE "))!;
+    const barcodeLine = out.split("\n").find((l) => l.startsWith("BARCODE "))!;
     expect(barcodeLine).not.toMatch(/[\r\n]/);
     expect(barcodeLine).not.toContain('"a"');
     expect(out.match(/^PRINT \d+/m)?.[0]).toBe("PRINT 1");
@@ -161,7 +161,7 @@ describe("barcode/QR command injection hardening", () => {
     const out = tsc.compile(
       label({ width: 40, height: 30 }).qrcode('x"\r\nCLS', { x: 10, y: 10 }),
     );
-    const qrLine = out.split("\r\n").find((l) => l.startsWith("QRCODE "))!;
+    const qrLine = out.split("\n").find((l) => l.startsWith("QRCODE "))!;
     expect(qrLine).not.toMatch(/[\r\n]/);
     expect(qrLine).not.toContain('"x"');
   });

@@ -6,20 +6,18 @@
 
 import type { LabelBuilder } from "../builder.js";
 import type { LabelElement, ResolvedLabel } from "../types.js";
+import { TSC_DOT_FONTS } from "../types.js";
 import { compileToTSC } from "../languages/tsc.js";
 import { rasterizeElement } from "../raster.js";
 
-/** TSC font pixel dimensions: { width, height } */
-const TSC_FONTS: Record<string, { w: number; h: number }> = {
-  "1": { w: 8, h: 12 },
-  "2": { w: 12, h: 20 },
-  "3": { w: 16, h: 24 },
-  "4": { w: 24, h: 32 },
-  "5": { w: 32, h: 48 },
-  "6": { w: 14, h: 19 },
-  "7": { w: 21, h: 27 },
-  "8": { w: 14, h: 25 },
-};
+/** TSC font pixel dimensions: shared table (fonts 1–8 fixed-pitch). */
+const TSC_FONTS: Record<string, { w: number; h: number }> = TSC_DOT_FONTS;
+
+/**
+ * Width-to-height ratio of a typical SVG/browser monospace font glyph.
+ * This is a rendering constant — independent of the printer's font metrics.
+ */
+const SVG_MONO_WIDTH_FACTOR = 0.6;
 
 function escapeXml(s: string): string {
   return s
@@ -27,6 +25,10 @@ function escapeXml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 function tscFontSize(
@@ -40,11 +42,31 @@ function tscFontSize(
   const f = TSC_FONTS[font ?? "2"];
   if (f) return f.h * (yScale ?? size ?? 1);
   // Font "0" (scalable): size unit follows the printer's font0Mode.
-  if (font0Mode === "points") return (size ?? 12) * (dpi / 72);
+  if (font0Mode === "points") return round2((size ?? 12) * (dpi / 72));
   return fontBase.height * (size ?? 1);
 }
 
-function tscCharWidth(
+/** Char width with the glyphs NOT x-stretched (unscaled local frame). Used for alignment. */
+function tscCharWidthUnscaled(
+  font: string | undefined,
+  size: number | undefined,
+  font0Mode: "multiplier" | "points",
+  dpi: number,
+  fontBase: { width: number; height: number },
+  charWidthFactor: number,
+): number {
+  const f = TSC_FONTS[font ?? "2"];
+  if (f) {
+    // Fixed-pitch fonts: the SVG monospace char width is used (same as
+    // svgCharWidth in tscXStretch) so alignment stays consistent.
+    return tscFontSize(font, size, size, font0Mode, dpi, fontBase) * SVG_MONO_WIDTH_FACTOR;
+  }
+  // Font "0" (scalable): use the printer's charWidthFactor.
+  return tscFontSize(font, size, size, font0Mode, dpi, fontBase) * charWidthFactor;
+}
+
+/** Horizontal glyph stretch for the preview: desired printer char width ÷ SVG monospace char width. */
+function tscXStretch(
   font: string | undefined,
   size: number | undefined,
   xScale: number | undefined,
@@ -53,10 +75,22 @@ function tscCharWidth(
   fontBase: { width: number; height: number },
   charWidthFactor: number,
 ): number {
+  const fs = tscFontSize(font, size, size, font0Mode, dpi, fontBase);
+  // SVG monospace char width is always based on the browser font's fixed ratio.
+  const svgCharWidth = Math.max(1, fs * SVG_MONO_WIDTH_FACTOR);
+
   const f = TSC_FONTS[font ?? "2"];
-  if (f) return f.w * (xScale ?? size ?? 1);
-  // Font "0": proportional, avg char ≈ charWidthFactor × line height.
-  return tscFontSize(font, size, xScale, font0Mode, dpi, fontBase) * charWidthFactor;
+  if (f) {
+    // Fixed-pitch dot fonts (1–8): desired width is xScale multiplier × base dot width.
+    const targetW = (xScale ?? size ?? 1) * f.w;
+    return round2(targetW / svgCharWidth);
+  }
+
+  // Font "0" (scalable): target width uses the printer's charWidthFactor.
+  const targetW = font0Mode === "points"
+    ? (xScale ?? size ?? 1) * (dpi / 72) * charWidthFactor
+    : (xScale ?? size ?? 1) * fontBase.width;
+  return round2(targetW / svgCharWidth);
 }
 
 function renderElement(
@@ -72,40 +106,50 @@ function renderElement(
       const x = o.x ?? 0;
       const y = o.y ?? 0;
       const charWidthFactor = o.charWidthFactor ?? defaultCharWidthFactor;
-      const fs = tscFontSize(o.font, o.size, o.yScale, font0Mode, dpi, fontBase);
-      const cw = tscCharWidth(o.font, o.size, o.xScale, font0Mode, dpi, fontBase, charWidthFactor);
+      const fs = round2(tscFontSize(o.font, o.size, o.yScale, font0Mode, dpi, fontBase));
+      const cw = tscCharWidthUnscaled(o.font, o.size, font0Mode, dpi, fontBase, charWidthFactor);
+      const stretch = tscXStretch(o.font, o.size, o.xScale, font0Mode, dpi, fontBase, charWidthFactor);
       const weight = o.bold ? "bold" : "normal";
-      const transform = o.rotation ? ` transform="rotate(${o.rotation} ${x} ${y})"` : "";
+      const rot = o.rotation ? ` rotate(${o.rotation} ${x} ${y})` : "";
 
       // Text anchor for alignment. When maxWidth is set (BLOCK), anchor within
       // that box. When the template manually positioned text (no maxWidth),
       // `align` tells the preview to anchor relative to the computed x.
+      // All offsets use the UNSCALED char width: the inner text lives in the
+      // stretched frame, so its local coordinates must be pre-stretch values.
       let anchor = "";
-      let textX = x;
+      let textX = 0;
       if (o.maxWidth && o.align === "center") {
         anchor = ' text-anchor="middle"';
-        textX = x + o.maxWidth / 2;
+        textX = round2((o.maxWidth / 2) / stretch);
       } else if (o.maxWidth && o.align === "right") {
         anchor = ' text-anchor="end"';
-        textX = x + o.maxWidth;
+        textX = round2(o.maxWidth / stretch);
       } else if (o.align === "center") {
         // Template-computed center: x is the left edge of the centered text.
+        // Local center of the stretched text = (n × cw × stretch) / 2, and in
+        // the local frame that's (n × cw) / 2.
         anchor = ' text-anchor="middle"';
-        textX = x + (el.content.length * cw) / 2;
+        textX = round2((el.content.length * cw) / 2);
       } else if (o.align === "right") {
         anchor = ' text-anchor="end"';
-        textX = x + el.content.length * cw;
+        textX = round2(el.content.length * cw);
       }
 
-      if (o.reverse) {
-        const tw = el.content.length * cw;
-        return (
-          `<rect x="${x - 1}" y="${y - 1}" width="${tw + 2}" height="${fs + 2}" fill="#000"/>` +
-          `<text x="${textX}" y="${y + fs * 0.85}" fill="#fff" font-size="${fs}" font-weight="${weight}" font-family="monospace"${anchor}${transform}>${escapeXml(el.content)}</text>`
-        );
-      }
+      const baseline = round2(fs * 0.85);
+      const innerText =
+        `<text x="${textX}" y="${baseline}" fill="${o.reverse ? "#fff" : "#000"}" font-size="${fs}" font-weight="${weight}" font-family="monospace"${anchor}>${escapeXml(el.content)}</text>`;
 
-      return `<text x="${textX}" y="${y + fs * 0.85}" fill="#000" font-size="${fs}" font-weight="${weight}" font-family="monospace"${anchor}${transform}>${escapeXml(el.content)}</text>`;
+      // Reverse text: the black rect must also sit in the stretched frame so it
+      // widens with the glyphs (tw uses the unscaled width).
+      const inner = o.reverse
+        ? `<rect x="-1" y="-1" width="${round2(el.content.length * cw + 2)}" height="${round2(fs + 2)}" fill="#000"/>${innerText}`
+        : innerText;
+
+      // Horizontal glyph stretch (BarTender-style X-only scaling). The outer
+      // group translates to the visual origin and scales the x-axis; the inner
+      // text uses pre-stretch coordinates. Rotation applies around the origin.
+      return `<g transform="translate(${x}, ${y})${stretch !== 1 ? ` scale(${stretch}, 1)` : ""}"${rot}>${inner}</g>`;
     }
 
     case "image": {
@@ -204,7 +248,7 @@ function renderElement(
       const showText =
         el.type === "barcode"
           ? (o as { readable?: boolean }).readable !== false
-          : (o as { showText?: boolean }).showText !== false;
+          : !!(o as { showText?: boolean }).showText;
       if (content && showText) {
         svg += `<text x="${x + bmp.width / 2}" y="${y + bmp.height + 12}" text-anchor="middle" fill="#000" font-size="10" font-family="monospace">${escapeXml(content)}</text>`;
       }
@@ -244,7 +288,8 @@ function renderPreviewSVG(resolved: ResolvedLabel): string {
 export const tsc = {
   /** Compile label to TSC/TSPL2 commands */
   compile(builder: LabelBuilder): string {
-    return compileToTSC(builder.resolve());
+    const resolved = builder.resolve();
+    return compileToTSC(resolved, { lineEnding: resolved.lineEnding });
   },
 
   /** Render label preview with TSC-specific font metrics */

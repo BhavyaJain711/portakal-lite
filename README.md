@@ -32,6 +32,21 @@ const zplCode = zpl.compile(myLabel); // ZPL II commands
 const svg = zpl.preview(myLabel);     // SVG preview
 ```
 
+### Fonts
+
+`.text()` accepts any TSC font id via `font`:
+
+- `"0"` — the scalable TrueType font. `size`/`xScale` are point sizes (or
+  multipliers of `fontBase` per `font0Mode`), with independent X/Y.
+- `"1"`–`"8"` — fixed-pitch dot fonts (`TSC_DOT_FONTS`): `size`/`xScale` are
+  integer multipliers 1–10 of the base dot size (8×12, 12×20, 16×24, 24×32,
+  32×48, 14×19 OCR-B, 21×27 OCR-B, 14×25 OCR-A).
+
+```ts
+label({ width: 40, height: 30 }).text("CUT: 9.00 m", { x: 10, y: 10, font: "3", size: 3, xScale: 2 });
+// → TEXT 10,10,"3",0,2,3,"CUT: 9.00 m"
+```
+
 ## Barcodes & QR codes
 
 ```ts
@@ -76,6 +91,16 @@ socket.end();
 
 // ...or write to a file for a print spooler
 // fs.writeFileSync("label.prn", commands);
+```
+
+TSC output uses LF (`\n`) line endings by default. If your printer firmware
+requires CRLF, pass `lineEnding: "\r\n"` (either to `label()` or as the second
+argument to `tsc.compile()`):
+
+```ts
+const commands = tsc.compile(
+  label({ width: 40, height: 30, lineEnding: "\r\n" }).text("Hello", { x: 10, y: 10 }),
+);
 ```
 
 ### Receipt-style aligned lines

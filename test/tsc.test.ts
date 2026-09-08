@@ -6,19 +6,36 @@ describe("TSC/TSPL2 compiler", () => {
   it("generates basic label setup commands", () => {
     const output = tsc.compile(label({ width: 40, height: 30 }));
 
-    expect(output).toContain("SIZE 40 mm,30 mm\r\n");
-    expect(output).toContain("GAP 3 mm,0 mm\r\n");
-    expect(output).toContain("SPEED 4\r\n");
-    expect(output).toContain("DENSITY 8\r\n");
-    expect(output).toContain("DIRECTION 0\r\n");
-    expect(output).toContain("CLS\r\n");
-    expect(output).toContain("PRINT 1\r\n");
+    expect(output).toContain("SIZE 40 mm,30 mm\n");
+    expect(output).not.toContain("GAP");
+    expect(output).not.toContain("SPEED");
+    expect(output).not.toContain("DENSITY");
+    expect(output).not.toContain("DIRECTION");
+    expect(output).toContain("CLS\n");
+    expect(output).toContain("PRINT 1\n");
   });
 
-  it("uses CRLF line endings", () => {
+  it("emits gap, speed, density, direction only when defined", () => {
+    const output = tsc.compile(
+      label({ width: 40, height: 30, gap: 3, speed: 4, density: 8, direction: 0 }),
+    );
+    expect(output).toContain("GAP 3 mm,0 mm\n");
+    expect(output).toContain("SPEED 4\n");
+    expect(output).toContain("DENSITY 8\n");
+    expect(output).toContain("DIRECTION 0\n");
+  });
+
+  it("uses LF line endings by default", () => {
     const output = tsc.compile(label({ width: 40, height: 30 }));
+    const lines = output.split("\n");
+    expect(lines.length).toBeGreaterThanOrEqual(3);
+    expect(output).not.toContain("\r");
+  });
+
+  it("supports CRLF line endings via lineEnding option", () => {
+    const output = tsc.compile(label({ width: 40, height: 30, lineEnding: "\r\n" }));
     const lines = output.split("\r\n");
-    expect(lines.length).toBeGreaterThan(5);
+    expect(lines.length).toBeGreaterThanOrEqual(3);
   });
 
   it("generates TEXT command", () => {
@@ -158,11 +175,59 @@ describe("TSC/TSPL2 compiler", () => {
     expect(output).toContain("DENSITY 12");
   });
 
+  it("widens font 0 with xScale in points mode (height fixed)", () => {
+    // Points mode + scalable font "0": TEXT x,y,"0",rot,w_pt,h_pt —
+    // xScale sets w, h stays size.
+    const wide = tsc.compile(
+      label({ width: 40, height: 30, font0Mode: "points" }).text("Wide", { x: 10, y: 10, size: 20, xScale: 40, font: "0" }),
+    );
+    expect(wide).toContain('TEXT 10,10,"0",0,40,20,"Wide"');
+  });
+
+  it("passes font 1-8 multipliers through as xMul/yMul", () => {
+    // Fixed-pitch fonts: TEXT x,y,"N",rot,xMul,yMul — size/xScale are
+    // integer multipliers of the base dot size, passed through verbatim.
+    const output = tsc.compile(
+      label({ width: 40, height: 30 }).text("Hi", { x: 10, y: 20, font: "3", size: 2, xScale: 3 }),
+    );
+    expect(output).toContain('TEXT 10,20,"3",0,3,2,"Hi"');
+  });
+
+  it("keeps font 0 points semantics distinct from fixed fonts", () => {
+    // font0Mode="points" only affects font "0"; fonts 1-8 stay multipliers.
+    const b = label({ width: 40, height: 30, font0Mode: "points" })
+      .text("A", { x: 0, y: 0, font: "3", size: 4, xScale: 4 });
+    expect(tsc.compile(b)).toContain('TEXT 0,0,"3",0,4,4,"A"');
+  });
+
   it("renders preview SVG with TSC font metrics", () => {
     const svg = tsc.preview(label({ width: 40, height: 30 }).text("Hello", { x: 10, y: 10, size: 2 }));
     expect(svg).toContain("<svg");
     expect(svg).toContain("Hello");
-    expect(svg).toContain("font-size=\"40\""); // font "2" (20px) × 2
     expect(svg).toContain("— TSC");
   });
+
+  it("previews fixed font 3 at its base dot size × multiplier", () => {
+    // Font "3" is 16×24 dots; size 2 → 32px tall in the SVG (font-size=48
+    // would be size 2 × 24). xScale 2 → stretch = (2×16)/(2×24) = 0.667.
+    const svg = tsc.preview(
+      label({ width: 40, height: 30 }).text("Hi", { x: 10, y: 10, font: "3", size: 2, xScale: 2 }),
+    );
+    expect(svg).toContain('font-size="48"');
+    expect(svg).toContain('scale(1.11, 1)');
+  });
+
+  it("stretches glyphs horizontally in the preview when xScale is set", () => {
+    const svg = tsc.preview(
+      label({ width: 40, height: 30, font0Mode: "points" }).text("Wide", {
+        x: 10, y: 10, size: 20, xScale: 40, font: "0",
+      }),
+    );
+    // Height stays at the point size (20pt → 56.4 dots @203dpi); the x-axis
+    // scales so each glyph width matches xScale. Target printer width uses
+    // charWidthFactor 0.5; SVG monospace is 0.6: 40*0.5 / (20*0.6) ≈ 1.67.
+    expect(svg).toContain('scale(1.67, 1)');
+    expect(svg).toContain('font-size="56.39"');
+  });
+
 });

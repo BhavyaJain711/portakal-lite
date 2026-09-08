@@ -1,4 +1,5 @@
 import type { LabelElement, ResolvedLabel } from "../types.js";
+import { TSC_DOT_FONTS } from "../types.js";
 import { bytesToHex, rasterizeElement } from "../raster.js";
 
 /**
@@ -87,13 +88,23 @@ function compileElement(
       // Font "0" size semantics depend on firmware:
       //  - "multiplier": `size` × fontBase → ^A h,w dots.
       //  - "points":     `size` (pt) × dpi/72 → ^A h,w dots.
+      // Fonts "1"–"8" are fixed-pitch: `size`/`xScale` are integer multipliers
+      // (1–10) of their base dot size from TSC_DOT_FONTS.
       const isScalable = font === "0";
       const ptToDots = dpi / 72;
+      // Fonts "1"–"8" use their fixed base from TSC_DOT_FONTS (w/h);
+      // font "0" uses fontBase (width/height).
+      const fixedBase = TSC_DOT_FONTS[font as Exclude<typeof font, "0">];
+      const baseH = isScalable ? fontBase.height : (fixedBase ?? fontBase).h;
+      const baseW = isScalable ? fontBase.width : (fixedBase ?? fontBase).w;
       const h = isScalable
-        ? Math.round((o.size ?? 1) * (font0Mode === "points" ? ptToDots : fontBase.height))
-        : Math.round((o.size ?? 1) * fontBase.height);
+        ? Math.round((o.size ?? 1) * (font0Mode === "points" ? ptToDots : baseH))
+        : Math.round((o.size ?? 1) * baseH);
+      // Font "0": an explicit `xScale` widens glyphs horizontally while the
+      // height `h` stays fixed (BarTender-style). Defaults to `h` (square).
+      // Fixed fonts: `xScale` is the X multiplier of the base width.
       const w = o.xScale != null
-        ? Math.round(o.xScale * (font0Mode === "points" ? ptToDots : fontBase.width))
+        ? Math.round(o.xScale * (font0Mode === "points" && isScalable ? ptToDots : baseW))
         : h;
 
       let cmd = `^FO${x},${y}`;
@@ -188,7 +199,7 @@ function compileElement(
       const y = o.y ?? 0;
       // ^BQ orientation, model, magnification, errorCorrection
       const rot = zplRotation(o.rotation ?? 0);
-      const ecc = o.ecc ?? "M";
+      const ecc = o.ecc ?? "H";
       const cw = o.cellSize ?? 6;
       return `^FO${x},${y}^BQ${rot},${ecc},${cw},${ecc}^FH_^FD${encodeZPLData(el.content)}^FS`;
     }
@@ -219,18 +230,28 @@ export function compileToZPL(label: ResolvedLabel): string {
   if (label.heightDots > 0) {
     lines.push(`^LL${label.heightDots}`);
   }
-  if (label.marginDots > 0) {
-    lines.push(`^ML${label.marginDots}`);
+  if (label.marginDots > 0 || label.marginTopDots > 0) {
+    const ml = label.marginTopDots || label.marginDots;
+    lines.push(`^ML${ml}`);
   }
-  lines.push(`^PR${label.speed}`);
-  lines.push(`~SD${label.density * 2}`);
+  if (label.speed != null) {
+    lines.push(`^PR${label.speed}`);
+  }
+  if (label.density != null) {
+    lines.push(`~SD${label.density * 2}`);
+  }
+  if (label.direction != null) {
+    lines.push(`^PO${label.direction === 1 ? "I" : "N"}`);
+  }
   lines.push("^CI28");
 
   for (const el of label.elements) {
     lines.push(compileElement(el, label.fontBase, label.font0Mode, label.dpi));
   }
 
-  lines.push(`^PQ${label.copies}`);
+  if (label.copies != null) {
+    lines.push(`^PQ${label.copies}`);
+  }
   lines.push("^XZ");
   return lines.join("\n") + "\n";
 }

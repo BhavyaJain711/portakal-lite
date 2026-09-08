@@ -11,7 +11,7 @@ describe("ZPL II compiler", () => {
     expect(output).toContain("^PW320");
     expect(output).toContain("^LL240");
     expect(output).toContain("^CI28");
-    expect(output).toContain("^PQ1");
+    expect(output).not.toContain("^PQ");
   });
 
   it("generates text field with hex-escape header", () => {
@@ -101,6 +101,35 @@ describe("ZPL II compiler", () => {
     expect(output).not.toContain("^LL0");
   });
 
+  it("widens font 0 with xScale (height fixed)", () => {
+    // Square: size 2 → h = 2×24 = 48, w defaults to h = 48.
+    const square = zpl.compile(
+      label({ width: 40, height: 30 }).text("Wide", { x: 10, y: 10, size: 2 }),
+    );
+    expect(square).toContain("^A0N,48,48");
+    // xScale 3 → w = 3 × 12 = 36, h stays 48.
+    const wide = zpl.compile(
+      label({ width: 40, height: 30 }).text("Wide", { x: 10, y: 10, size: 2, xScale: 3 }),
+    );
+    expect(wide).toContain("^A0N,48,36");
+  });
+
+  it("uses the fixed-pitch base size for fonts 1-8 (^A1..^A8)", () => {
+    // Font "3" is 16×24 dots: size 3 → h = 3×24 = 72, w = 3×16 = 48.
+    const output = zpl.compile(
+      label({ width: 40, height: 30 }).text("Hi", { x: 10, y: 10, font: "3", size: 3, xScale: 3 }),
+    );
+    expect(output).toContain("^A3N,72,48");
+  });
+
+  it("does not apply font0Mode points to fixed fonts in ZPL", () => {
+    // font0Mode="points" only affects font "0"; font "3" stays a multiplier.
+    const output = zpl.compile(
+      label({ width: 40, height: 30, font0Mode: "points" }).text("A", { x: 0, y: 0, font: "3", size: 4, xScale: 4 }),
+    );
+    expect(output).toContain("^A3N,96,64"); // 4 × 24, 4 × 16
+  });
+
   it("renders preview SVG with ZPL font metrics", () => {
     const svg = zpl.preview(
       label({ width: 40, height: 30 }).text("Hello ZPL", { x: 50, y: 50, size: 2 }),
@@ -108,5 +137,15 @@ describe("ZPL II compiler", () => {
     expect(svg).toContain("<svg");
     expect(svg).toContain("Hello ZPL");
     expect(svg).toContain("— ZPL");
+  });
+
+  it("stretches glyphs horizontally in the ZPL preview when xScale is set", () => {
+    const svg = zpl.preview(
+      label({ width: 40, height: 30, font0Mode: "points" }).text("Wide", {
+        x: 10, y: 10, size: 20, xScale: 40, font: "0",
+      }),
+    );
+    expect(svg).toContain('scale(2, 1)');
+    expect(svg).toContain('font-size="56.39"');
   });
 });

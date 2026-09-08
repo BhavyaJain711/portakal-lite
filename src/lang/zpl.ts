@@ -29,12 +29,22 @@ const ZPL_FONTS: Record<string, { w: number; h: number }> = {
   "0": { w: 15, h: 18 }, // base for scalable — actual size from ^A params
 };
 
+/**
+ * Width-to-height ratio of a typical SVG/browser monospace font glyph.
+ * This is a rendering constant — independent of the printer's font metrics.
+ */
+const SVG_MONO_WIDTH_FACTOR = 0.6;
+
 function escapeXml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 /** Is this a scalable/proportional font? Font 0 is CG Triumvirate (proportional). */
@@ -52,11 +62,17 @@ function zplFontSize(
 ): number {
   // yScale = raw dot height from ^A or ^CF command
   if (yScale && yScale > 10) return yScale;
-  const f = ZPL_FONTS[(font ?? "0").toUpperCase()];
-  if (f && size) return f.h * size;
-  if (f) return f.h;
+  const key = (font ?? "0").toUpperCase();
+  // Font "0" is scalable (CG Triumvirate): its actual size comes from the
+  // ^A h,w parameters, not the ZPL_FONTS base cell. Only bitmap fonts A-H
+  // use the fixed cell scaled by `size`.
+  if (key !== "0") {
+    const f = ZPL_FONTS[key];
+    if (f && size) return f.h * size;
+    if (f) return f.h;
+  }
   // Font "0" (scalable): size unit follows the printer's font0Mode.
-  if (font0Mode === "points") return (size ?? 12) * (dpi / 72);
+  if (font0Mode === "points") return round2((size ?? 12) * (dpi / 72));
   return fontBase.height * (size ?? 1);
 }
 
@@ -65,6 +81,35 @@ function zplBaselineRatio(font: string | undefined): number {
   // Font 0 (CG Triumvirate / Helvetica-like): ascent ≈ 0.78
   // Bitmap fonts A-H: ascent ≈ 0.82
   return isProportionalFont(font) ? 0.78 : 0.82;
+}
+
+/** Horizontal glyph stretch for the preview: desired printer char width ÷ SVG monospace char width. */
+function zplXStretch(
+  font: string | undefined,
+  size: number | undefined,
+  xScale: number | undefined,
+  font0Mode: "multiplier" | "points",
+  dpi: number,
+  fontBase: { width: number; height: number },
+  _charWidthFactor: number,
+): number {
+  const key = (font ?? "0").toUpperCase();
+  // Bitmap fonts A-H: width = xScale × base.w, height = size × base.h.
+  if (key !== "0") {
+    const f = ZPL_FONTS[key];
+    if (f) {
+      const fs = zplFontSize(font, size, size, font0Mode, dpi, fontBase);
+      const svgCharWidth = Math.max(1, fs * SVG_MONO_WIDTH_FACTOR);
+      const targetW = (xScale ?? size ?? 1) * f.w;
+      return round2(targetW / svgCharWidth);
+    }
+  }
+  // Font "0" (scalable): ^A h,w — w = xScale × (ptToDots | base.width),
+  // h = size × (ptToDots | base.height). The ratio is the stretch.
+  const ptToDots = dpi / 72;
+  const w = (xScale ?? size ?? 1) * (font0Mode === "points" ? ptToDots : fontBase.width);
+  const h = (size ?? 1) * (font0Mode === "points" ? ptToDots : fontBase.height);
+  return round2(w / h);
 }
 
 /** CSS font-family for ZPL font. Uses single quotes for SVG attribute compatibility. */
@@ -88,36 +133,43 @@ function renderElement(
       const x = o.x ?? 0;
       const y = o.y ?? 0;
       const charWidthFactor = o.charWidthFactor ?? defaultCharWidthFactor;
-      const fs = zplFontSize(o.font, o.size, o.yScale, font0Mode, dpi, fontBase);
-      const baseline = zplBaselineRatio(o.font);
+      const fs = round2(zplFontSize(o.font, o.size, o.yScale, font0Mode, dpi, fontBase));
       const fontFamily = zplFontFamily(o.font);
       const weight = o.bold ? "bold" : "normal";
       const transform = o.rotation ? ` transform="rotate(${o.rotation} ${x} ${y})"` : "";
+      const fill = o.reverse ? "#fff" : "#000";
+      const baseline = round2(fs * zplBaselineRatio(o.font));
+      const stretch = zplXStretch(o.font, o.size, o.xScale, font0Mode, dpi, fontBase, charWidthFactor);
 
       // Text anchor for ^FB alignment. With maxWidth, anchor within that box.
       // Without it, the template may have manually positioned text; `align`
       // then anchors relative to the computed x.
+      // Offsets use UNSCALED widths: the inner text lives in the stretched
+      // frame, so its local coordinates must be pre-stretch values.
       let anchor = "";
-      let textX = x;
+      let textX = 0;
+      const cw = fs * charWidthFactor;
       if (o.maxWidth && o.align === "center") {
         anchor = ' text-anchor="middle"';
-        textX = x + o.maxWidth / 2;
+        textX = round2((o.maxWidth / 2) / stretch);
       } else if (o.maxWidth && o.align === "right") {
         anchor = ' text-anchor="end"';
-        textX = x + o.maxWidth;
+        textX = round2(o.maxWidth / stretch);
       } else if (o.align === "center") {
-        const cw = fs * charWidthFactor; // avg char width for font "0"
         anchor = ' text-anchor="middle"';
-        textX = x + (el.content.length * cw) / 2;
+        textX = round2((el.content.length * cw) / 2);
       } else if (o.align === "right") {
-        const cw = fs * charWidthFactor;
         anchor = ' text-anchor="end"';
-        textX = x + el.content.length * cw;
+        textX = round2(el.content.length * cw);
       }
 
-      const fill = o.reverse ? "#fff" : "#000";
-      const svgY = Math.round((y + fs * baseline) * 100) / 100;
-      return `<text x="${textX}" y="${svgY}" fill="${fill}" font-size="${fs}" font-weight="${weight}" font-family="${fontFamily}"${anchor}${transform}>${escapeXml(el.content)}</text>`;
+      const innerText =
+        `<text x="${textX}" y="${baseline}" fill="${fill}" font-size="${fs}" font-weight="${weight}" font-family="${fontFamily}"${anchor}>${escapeXml(el.content)}</text>`;
+
+      // Horizontal glyph stretch (BarTender-style X-only scaling). The outer
+      // group translates to the visual origin and scales the x-axis; the inner
+      // text uses pre-stretch coordinates. Rotation applies around the origin.
+      return `<g transform="translate(${x}, ${y})${stretch !== 1 ? ` scale(${stretch}, 1)` : ""}"${transform}>${innerText}</g>`;
     }
 
     case "image": {
@@ -211,7 +263,7 @@ function renderElement(
       const showText =
         el.type === "barcode"
           ? (o as { readable?: boolean }).readable !== false
-          : (o as { showText?: boolean }).showText !== false;
+          : !!(o as { showText?: boolean }).showText;
       if (content && showText) {
         svg += `<text x="${x + bmp.width / 2}" y="${y + bmp.height + 12}" text-anchor="middle" fill="#000" font-size="10" font-family="monospace">${escapeXml(content)}</text>`;
       }

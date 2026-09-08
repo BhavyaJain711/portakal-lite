@@ -9,6 +9,26 @@ export type Unit = "mm" | "inch" | "dot";
 /** Print orientation / rotation */
 export type Rotation = 0 | 90 | 180 | 270;
 
+/** TSC text fonts: "0" is the scalable TrueType font, "1"–"8" are fixed-pitch dot fonts. */
+export type TSCTextFont = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8";
+
+/**
+ * Base dot sizes for the fixed-pitch TSC fonts 1–8 (the source of truth used by
+ * the compiler, the preview, and portakal-template's autoscaler).
+ * Font "0" is scalable and sized in points (or as a multiplier of `fontBase`),
+ * so it is not in this table.
+ */
+export const TSC_DOT_FONTS: Record<Exclude<TSCTextFont, "0">, { w: number; h: number }> = {
+  "1": { w: 8, h: 12 },
+  "2": { w: 12, h: 20 },
+  "3": { w: 16, h: 24 },
+  "4": { w: 24, h: 32 },
+  "5": { w: 32, h: 48 },
+  "6": { w: 14, h: 19 },
+  "7": { w: 21, h: 27 },
+  "8": { w: 14, h: 25 },
+};
+
 /** Text alignment */
 export type Alignment = "left" | "center" | "right";
 
@@ -40,7 +60,8 @@ export interface LabelConfig {
   font0Mode?: "multiplier" | "points";
   /**
    * Average glyph width relative to the font height for text width estimates
-   * (default 0.6). Font "0" TrueType runs ~0.5–0.6× the point height; tune
+   * (default 0.5). Font "0" (CG Triumvirate Bold Condensed) runs ~0.5× the
+   * point height — the condensed typeface is narrower than regular fonts. Tune
    * per printer/font if centered text drifts. Overridden per element via
    * TextOptions.charWidthFactor.
    */
@@ -52,7 +73,12 @@ export interface LabelConfig {
    * from the media edge. Emitted as `^ML` on ZPL; TSC has no equivalent
    * command, so the caller insets the layout instead.
    */
-  margin?: number;
+  margin?: number | {
+    top?: number;
+    bottom?: number;
+    left?: number;
+    right?: number;
+  };
   /** Print speed (1-10, printer-dependent) */
   speed?: number;
   /** Print darkness/density (0-15) */
@@ -61,6 +87,10 @@ export interface LabelConfig {
   direction?: 0 | 1;
   /** Number of copies */
   copies?: number;
+  /**
+   * TSC line ending: `"\n"` (default) or `"\r\n"` for printers that need CRLF.
+   */
+  lineEnding?: "\n" | "\r\n";
 }
 
 /** Text element options */
@@ -69,8 +99,13 @@ export interface TextOptions {
   x?: number;
   /** Y position */
   y?: number;
-  /** Font name or ID */
-  font?: string;
+  /**
+   * Font name or ID. "0" is the scalable TrueType font (sized per `font0Mode`:
+   * points, or multiplier of `fontBase`). "1"–"8" are fixed-pitch dot fonts
+   * (see `TSC_DOT_FONTS`), sized as an integer multiplier 1–10 of the base.
+   * Default "2".
+   */
+  font?: TSCTextFont;
   /** Font size or magnification */
   size?: number;
   /** Horizontal magnification (1-10) */
@@ -95,7 +130,7 @@ export interface TextOptions {
   lineSpacing?: number;
   /**
    * Average glyph width relative to the font height for text width estimates
-   * in the preview (default: the builder's charWidthFactor, 0.6). Tune per
+   * in the preview (default: the builder's charWidthFactor, 0.5). Tune per
    * printer/font if centered text drifts in the preview.
    */
   charWidthFactor?: number;
@@ -249,6 +284,8 @@ export interface QrCodeOptions {
   mask?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
   eci?: number;
   gs1?: boolean;
+  /** Show human-readable text below the symbol */
+  showText?: boolean;
 }
 
 /** 2D barcode element options (etiket raster path). */
@@ -307,18 +344,28 @@ export interface ResolvedLabel {
    * estimates (preview centering), from config.
    */
   charWidthFactor: number;
-  /** Gap in dots */
-  gapDots: number;
+  /** Gap in dots (optional, emitted only if defined) */
+  gapDots?: number;
   /** Print margin in dots */
   marginDots: number;
-  /** Speed */
-  speed: number;
-  /** Density */
-  density: number;
-  /** Direction */
-  direction: 0 | 1;
-  /** Copies */
-  copies: number;
+  /** Top print margin in dots */
+  marginTopDots: number;
+  /** Bottom print margin in dots */
+  marginBottomDots: number;
+  /** Left print margin in dots */
+  marginLeftDots: number;
+  /** Right print margin in dots */
+  marginRightDots: number;
+  /** Speed (optional, emitted only if defined) */
+  speed?: number;
+  /** Density (optional, emitted only if defined) */
+  density?: number;
+  /** Direction (optional, emitted only if defined) */
+  direction?: 0 | 1;
+  /** Copies (optional, defaults to 1) */
+  copies?: number;
+  /** TSC line ending (default `"\n"`, or `"\r\n"` for CRLF printers) */
+  lineEnding: "\n" | "\r\n";
   /** All elements to render */
   elements: LabelElement[];
 }

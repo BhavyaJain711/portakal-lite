@@ -29,14 +29,14 @@ describe("TSC native barcode/QR", () => {
     const out = tsc.compile(
       label({ width: 40, height: 30 }).qrcode("https://example.com", { x: 10, y: 10 }),
     );
-    expect(out).toContain('QRCODE 10,10,M,6,A,0,"https://example.com"');
+    expect(out).toContain('QRCODE 10,10,H,6,A,0,"https://example.com"');
   });
 
   it("compiles QR with ecc/rotation", () => {
     const out = tsc.compile(
-      label({ width: 40, height: 30 }).qrcode("HI", { x: 5, y: 5, ecc: "H", rotation: 90 }),
+      label({ width: 40, height: 30 }).qrcode("HI", { x: 5, y: 5, ecc: "M", rotation: 90 }),
     );
-    expect(out).toContain('QRCODE 5,5,H,6,A,90,"HI"');
+    expect(out).toContain('QRCODE 5,5,M,6,A,90,"HI"');
   });
 });
 
@@ -66,14 +66,14 @@ describe("ZPL native barcode/QR", () => {
     const out = zpl.compile(
       label({ width: 40, height: 30 }).qrcode("https://example.com", { x: 10, y: 10 }),
     );
-    expect(out).toContain("^FO10,10^BQN,M,6,M^FH_^FDhttps://example.com^FS");
+    expect(out).toContain("^FO10,10^BQN,H,6,H^FH_^FDhttps://example.com^FS");
   });
 
   it("compiles QR with rotation", () => {
     const out = zpl.compile(
       label({ width: 40, height: 30 }).qrcode("HI", { x: 5, y: 5, rotation: 90 }),
     );
-    expect(out).toContain("^FO5,5^BQR,M,6,M^FH_^FDHI^FS");
+    expect(out).toContain("^FO5,5^BQR,H,6,H^FH_^FDHI^FS");
   });
 });
 
@@ -168,7 +168,7 @@ describe("preview rendering", () => {
 
   it("renders real QR pixels with finder-squares-like dark density and data text", () => {
     const svg = zpl.preview(
-      label({ width: 40, height: 30 }).qrcode("https://example.com", { x: 10, y: 10 }),
+      label({ width: 40, height: 30 }).qrcode("https://example.com", { x: 10, y: 10, showText: true }),
     );
     expect(svg).toContain('fill="#000"');
     expect(svg).not.toContain("<pattern");

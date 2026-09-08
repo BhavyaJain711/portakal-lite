@@ -1,4 +1,5 @@
 import type { LabelElement, ResolvedLabel } from "../types.js";
+import { TSC_DOT_FONTS } from "../types.js";
 import { bytesToTSC, rasterizeElement } from "../raster.js";
 
 /**
@@ -46,16 +47,33 @@ function compileElement(
       //                  through as TEXT x,y,"0",rot,w_pt,h_pt.
       const size = o.size ?? 1;
       const isScalable = font === "0";
-      const xMul = isScalable && font0Mode === "points" ? size : (o.xScale ?? size);
-      const yMul = isScalable && font0Mode === "points" ? size : (o.yScale ?? size);
+      // Fixed fonts (1–8) strictly require integer multipliers 1–10.
+      const xMul = isScalable
+        ? Math.round(o.xScale ?? size)
+        : Math.max(1, Math.min(10, Math.round(o.xScale ?? size)));
+      const yMul = isScalable
+        ? (font0Mode === "points" ? Math.round(size) : Math.round(o.yScale ?? size))
+        : Math.max(1, Math.min(10, Math.round(o.yScale ?? size)));
+      let cmd = "";
       if (o.maxWidth) {
         const align = o.align === "center" ? 2 : o.align === "right" ? 3 : 1;
         const spacing = o.lineSpacing ?? 0;
         const height = o.maxHeight ?? o.maxWidth;
-        return `BLOCK ${x},${y},${o.maxWidth},${height},"${font}",${rotation},${xMul},${yMul},${spacing},${align},"${sanitizeTSCString(el.content)}"`;
+        cmd = `BLOCK ${x},${y},${o.maxWidth},${height},"${font}",${rotation},${xMul},${yMul},${spacing},${align},"${sanitizeTSCString(el.content)}"`;
+      } else {
+        cmd = `TEXT ${x},${y},"${font}",${rotation},${xMul},${yMul},"${sanitizeTSCString(el.content)}"`;
       }
 
-      return `TEXT ${x},${y},"${font}",${rotation},${xMul},${yMul},"${sanitizeTSCString(el.content)}"`;
+      if (o.reverse) {
+        const f = TSC_DOT_FONTS[font as keyof typeof TSC_DOT_FONTS];
+        const charW = f ? f.w * xMul : xMul;
+        const fontH = f ? f.h * yMul : yMul;
+        const w = o.maxWidth || Math.round(el.content.length * charW);
+        const h = Math.round(fontH);
+        cmd += `\nREVERSE ${x},${y},${w},${h}`;
+      }
+
+      return cmd;
     }
 
     case "image": {
@@ -137,7 +155,7 @@ function compileElement(
       const y = o.y ?? 0;
       // TSC QRCODE: x,y,ECC,cellwidth,mode,rotation,"content"
       // ECC (L/M/Q/H) and mode (A/M) are NOT quoted in TSPL.
-      const ecc = o.ecc ?? "M";
+      const ecc = o.ecc ?? "H";
       const cellWidth = o.cellSize ?? 6;
       const rotation = o.rotation ?? 0;
       return `QRCODE ${x},${y},${ecc},${cellWidth},A,${rotation},"${sanitizeTSCString(el.content)}"`;
@@ -157,25 +175,41 @@ function compileElement(
   }
 }
 
-/** Compile a resolved label to TSC/TSPL2 command string */
-export function compileToTSC(label: ResolvedLabel): string {
+/**
+ * Compile a resolved label to TSC/TSPL2 command string.
+ * Lines are joined with `\n` by default; pass `lineEnding: "\r\n"` if the
+ * target printer firmware requires CRLF (some TSC drivers default to it).
+ */
+export function compileToTSC(
+  label: ResolvedLabel,
+  options: { lineEnding?: "\n" | "\r\n" } = {},
+): string {
+  const lineEnding = options.lineEnding ?? "\n";
   const lines: string[] = [];
   const dpi = label.dpi;
   const wMM = Math.round((label.widthDots / dpi) * 25.4);
   const hMM = label.heightDots > 0 ? Math.round((label.heightDots / dpi) * 25.4) : 0;
-  const gMM = Math.round((label.gapDots / dpi) * 25.4);
 
   lines.push(`SIZE ${wMM} mm,${hMM} mm`);
-  lines.push(`GAP ${gMM} mm,0 mm`);
-  lines.push(`SPEED ${label.speed}`);
-  lines.push(`DENSITY ${label.density}`);
-  lines.push(`DIRECTION ${label.direction}`);
+  if (label.gapDots != null && label.gapDots > 0) {
+    const gMM = Math.round((label.gapDots / dpi) * 25.4);
+    lines.push(`GAP ${gMM} mm,0 mm`);
+  }
+  if (label.speed != null) {
+    lines.push(`SPEED ${label.speed}`);
+  }
+  if (label.density != null) {
+    lines.push(`DENSITY ${label.density}`);
+  }
+  if (label.direction != null) {
+    lines.push(`DIRECTION ${label.direction}`);
+  }
   lines.push("CLS");
 
   for (const el of label.elements) {
     lines.push(compileElement(el, label.font0Mode));
   }
 
-  lines.push(`PRINT ${label.copies}`);
-  return lines.join("\r\n") + "\r\n";
+  lines.push(`PRINT ${label.copies ?? 1}`);
+  return lines.join(lineEnding) + lineEnding;
 }
