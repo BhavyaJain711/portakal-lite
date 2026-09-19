@@ -9,6 +9,11 @@
 export { label, LabelBuilder } from "./builder.js";
 export { PortakalError, InvalidConfigError } from "./errors.js";
 export { toDots } from "./utils.js";
+export { toMonochromeBitmap } from "./dither.js";
+export type { MonochromeOptions } from "./dither.js";
+export { monochromeToSvgPath } from "./raster.js";
+export { formatTSCBytes } from "./tsctext.js";
+export { bytesToBase64, base64ToBytes, chunkBytes } from "./base64.js";
 export {
   formatRow,
   formatPair,

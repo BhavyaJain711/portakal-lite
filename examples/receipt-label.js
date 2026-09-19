@@ -3,7 +3,7 @@
  * Receipt-style label example — separator + formatTable items + total, with a
  * Code 128 order barcode, compiled to both TSC and ZPL.
  */
-import { label, tsc, zpl, formatTable, formatPair, separator } from "../dist/index.js";
+import { label, tsc, zpl, formatTable, formatPair, separator } from "../dist/index.mjs";
 
 const orderId = "ORD-482913";
 

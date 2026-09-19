@@ -3,7 +3,7 @@
  * Shipping label example — text lines (with receipt helpers), a Code 128
  * tracking barcode and a QR URL, compiled to both TSC and ZPL.
  */
-import { label, tsc, zpl, formatPair, separator } from "../dist/index.js";
+import { label, tsc, zpl, formatPair, separator } from "../dist/index.mjs";
 
 const tracking = "1Z999AA10123456784";
 const url = "https://track.example.com/t/1Z999AA10123456784";

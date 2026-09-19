@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { label, tsc, zpl } from "../src/index.js";
+import { formatTSCBytes, label, tsc, zpl } from "../src/index.js";
 import { InvalidConfigError } from "../src/index.js";
 
 describe("ZPL command injection hardening", () => {
@@ -54,7 +54,9 @@ describe("ZPL command injection hardening", () => {
 describe("TSC command injection hardening", () => {
   it("neutralizes quotes and control characters in TEXT content", () => {
     const payload = 'foo"\r\nCLS\r\nPRINT 999\r\n"bar';
-    const output = tsc.compile(label({ width: 40, height: 30 }).text(payload, { x: 10, y: 10 }));
+    const output = formatTSCBytes(
+      tsc.compile(label({ width: 40, height: 30 }).text(payload, { x: 10, y: 10 })),
+    );
 
     // The injection payload is fully neutralized inside a single quoted string
     const textLine = output.split("\n").find((l) => l.startsWith("TEXT "))!;
@@ -67,8 +69,8 @@ describe("TSC command injection hardening", () => {
   });
 
   it("sanitizes BLOCK content too", () => {
-    const output = tsc.compile(
-      label({ width: 40, height: 30 }).text('a"b\nc', { x: 10, y: 10, maxWidth: 300 }),
+    const output = formatTSCBytes(
+      tsc.compile(label({ width: 40, height: 30 }).text('a"b\nc', { x: 10, y: 10, maxWidth: 300 })),
     );
     const blockLine = output.split("\n").find((l) => l.startsWith("BLOCK "))!;
     expect(blockLine).not.toMatch(/[\r\n]/);
@@ -76,7 +78,9 @@ describe("TSC command injection hardening", () => {
   });
 
   it("strips control characters from content", () => {
-    const output = tsc.compile(label({ width: 40, height: 30 }).text("a\u0000b\u001fc", { x: 10, y: 10 }));
+    const output = formatTSCBytes(
+      tsc.compile(label({ width: 40, height: 30 }).text("a\u0000b\u001fc", { x: 10, y: 10 })),
+    );
     expect(output).toContain('"a b c"');
   });
 });
@@ -101,7 +105,7 @@ describe("SVG preview escaping", () => {
 
 describe("raw passthrough is documented trusted input", () => {
   it("passes raw commands through verbatim (intentional)", () => {
-    const output = tsc.compile(label({ width: 40, height: 30 }).raw("SET CUTTER ON"));
+    const output = formatTSCBytes(tsc.compile(label({ width: 40, height: 30 }).raw("SET CUTTER ON")));
     expect(output).toContain("SET CUTTER ON");
   });
 });
@@ -148,8 +152,8 @@ describe("barcode/QR command injection hardening", () => {
   });
 
   it("sanitizes TSC barcode content (quotes/CRLF)", () => {
-    const out = tsc.compile(
-      label({ width: 40, height: 30 }).barcode('a"\r\nPRINT 999\r\n', { x: 10, y: 10 }),
+    const out = formatTSCBytes(
+      tsc.compile(label({ width: 40, height: 30 }).barcode('a"\r\nPRINT 999\r\n', { x: 10, y: 10 })),
     );
     const barcodeLine = out.split("\n").find((l) => l.startsWith("BARCODE "))!;
     expect(barcodeLine).not.toMatch(/[\r\n]/);
@@ -158,8 +162,8 @@ describe("barcode/QR command injection hardening", () => {
   });
 
   it("sanitizes TSC QR content", () => {
-    const out = tsc.compile(
-      label({ width: 40, height: 30 }).qrcode('x"\r\nCLS', { x: 10, y: 10 }),
+    const out = formatTSCBytes(
+      tsc.compile(label({ width: 40, height: 30 }).qrcode('x"\r\nCLS', { x: 10, y: 10 })),
     );
     const qrLine = out.split("\n").find((l) => l.startsWith("QRCODE "))!;
     expect(qrLine).not.toMatch(/[\r\n]/);

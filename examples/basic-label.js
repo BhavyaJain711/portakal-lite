@@ -3,7 +3,7 @@
  * Basic portakal-lite example — text, box, barcode and QR code,
  * compiled to both TSC and ZPL.
  */
-import { label, tsc, zpl } from "../dist/index.js";
+import { label, tsc, zpl } from "../dist/index.mjs";
 
 const myLabel = label({ width: 40, height: 30, unit: "mm", printer: "zebra-zd420" })
   .text("ACME Corp", { x: 50, y: 50, font: "0", size: 2 })

@@ -3,6 +3,7 @@ import {
   formatPair,
   formatRow,
   formatTable,
+  formatTSCBytes,
   label,
   separator,
   tsc,
@@ -158,11 +159,13 @@ describe("receipt integration", () => {
   });
 
   it("feeds aligned lines into TSC text", () => {
-    const code = tsc.compile(
-      label({ width: 40, height: 30 }).text(formatPair("Item", "$25.98", 32), {
-        x: 10,
-        y: 10,
-      }),
+    const code = formatTSCBytes(
+      tsc.compile(
+        label({ width: 40, height: 30 }).text(formatPair("Item", "$25.98", 32), {
+          x: 10,
+          y: 10,
+        }),
+      ),
     );
     // formatPair("Item", "$25.98", 32): "Item" padded to 26 with 22 spaces
     const expected = 'TEXT 10,10,"2",0,1,1,"Item' + " ".repeat(22) + '$25.98"';

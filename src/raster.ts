@@ -19,9 +19,9 @@ import { encodePDF417 } from "etiket/pdf417";
 import { encodeAztec } from "etiket/aztec";
 
 /** Hard cap on rasterized dimensions (protects ZPL ^GFA 16-bit fields). */
-const MAX_RASTER_DOTS = 65535;
+export const MAX_RASTER_DOTS = 65535;
 /** Total raster bytes cap (DoS guard against huge matrices). */
-const MAX_RASTER_BYTES = 2_000_000;
+export const MAX_RASTER_BYTES = 2_000_000;
 
 export interface RasterizeOptions {
   /** Module width in dots (1D narrow bar, 2D cell). Default 2 (1D) / 6 (2D). */
@@ -252,4 +252,63 @@ export function bytesToHex(data: Uint8Array): string {
     out += data[i]!.toString(16).padStart(2, "0").toUpperCase();
   }
   return out;
+}
+
+/**
+ * Render a `MonochromeBitmap` as one SVG path in bitmap dot coordinates.
+ *
+ * One `<path>` with a subpath per black run replaces thousands of `<rect>`
+ * nodes — the preview stays cheap to parse and cannot lock up react-native-svg.
+ * Bitmaps larger than `maxDimension` are reduced using area coverage (a display
+ * dot is black when at least half the source pixels it covers are black), which
+ * keeps grey impression and thin features; the printed bitmap is unaffected.
+ *
+ * The default ceiling is deliberately above any realistic preview display
+ * (roughly 1000 device pixels), so an image the size of a label cell is drawn
+ * without reduction. Callers that draw into a small box should pass their own
+ * `maxDimension` rather than rely on a bigger bitmap giving a better preview.
+ */
+export function monochromeToSvgPath(
+  bmp: MonochromeBitmap,
+  options: { maxDimension?: number } = {},
+): string {
+  const maxDimension = Math.max(1, options.maxDimension ?? 1000);
+  const factor = Math.max(1, Math.ceil(Math.max(bmp.width, bmp.height) / maxDimension));
+  const outW = Math.ceil(bmp.width / factor);
+  const outH = Math.ceil(bmp.height / factor);
+
+  const isBlack = (x: number, y: number): boolean =>
+    ((bmp.data[y * bmp.bytesPerRow + (x >> 3)]! >> (7 - (x & 7))) & 1) === 1;
+
+  const isCovered = (ox: number, oy: number): boolean => {
+    const x0 = ox * factor;
+    const y0 = oy * factor;
+    const x1 = Math.min(bmp.width, x0 + factor);
+    const y1 = Math.min(bmp.height, y0 + factor);
+    let black = 0;
+    let total = 0;
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        total++;
+        if (isBlack(x, y)) black++;
+      }
+    }
+    return total > 0 && black * 2 >= total;
+  };
+
+  let path = "";
+  for (let oy = 0; oy < outH; oy++) {
+    let ox = 0;
+    while (ox < outW) {
+      if (!isCovered(ox, oy)) {
+        ox++;
+        continue;
+      }
+      let run = 0;
+      while (ox + run < outW && isCovered(ox + run, oy)) run++;
+      path += `M${ox * factor} ${oy * factor}h${run * factor}v${factor}H${ox * factor}z`;
+      ox += run;
+    }
+  }
+  return path;
 }

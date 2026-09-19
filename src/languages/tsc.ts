@@ -1,12 +1,15 @@
-import type { LabelElement, ResolvedLabel } from "../types.js";
+import type { LabelElement, MonochromeBitmap, ResolvedLabel } from "../types.js";
 import { TSC_DOT_FONTS } from "../types.js";
-import { bytesToTSC, rasterizeElement } from "../raster.js";
+import { rasterizeElement } from "../raster.js";
 
 /**
- * TSC/TSPL2 compiler. Command generation is identical to portakal; the
- * difference is `sanitizeTSCString()` which prevents command injection via
- * TEXT/BLOCK content (quotes and control characters that would break out of
- * the quoted string and inject commands like CLS or PRINT).
+ * TSC/TSPL2 compiler — produces a `Uint8Array` ready to send to the printer.
+ *
+ * Text commands (SIZE, TEXT, BOX, …) are UTF-8 encoded.  BITMAP pixel data is
+ * emitted as **raw binary bytes** immediately after the header comma — this is
+ * what TSC printers expect.  The previous comma-separated decimal encoding
+ * (e.g. `"255,0"`) was wrong: the printer treated each ASCII character as a
+ * raw byte, producing garbled images.
  */
 
 /**
@@ -30,10 +33,59 @@ function sanitizeTSCString(s: string): string {
   return out;
 }
 
+const encoder = new TextEncoder();
+
+/** Encode a string to UTF-8 bytes. */
+function strToBytes(s: string): Uint8Array {
+  return encoder.encode(s);
+}
+
+/** Concatenate multiple Uint8Arrays into one. */
+function concat(...arrays: Uint8Array[]): Uint8Array {
+  let totalLength = 0;
+  for (const arr of arrays) totalLength += arr.length;
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const arr of arrays) {
+    result.set(arr, offset);
+    offset += arr.length;
+  }
+  return result;
+}
+
+/**
+ * Result of compiling a single element. Text-only elements produce a string
+ * command. Bitmap elements produce a text header + raw binary pixel data.
+ */
+type CompiledElement =
+  | { kind: "text"; command: string }
+  | { kind: "bitmap"; header: string; data: Uint8Array };
+
+/**
+ * Build the BITMAP header + raw binary data for a monochrome bitmap.
+ * The header is `BITMAP x,y,bytesPerRow,height,mode,` (note the trailing
+ * comma with NO newline) — raw bytes follow immediately.
+ *
+ * NOTE: TSPL's BITMAP command uses inverse polarity where 0 = black (burned dot)
+ * and 1 = white (unprinted paper), whereas MonochromeBitmap uses 1 = black, 0 = white.
+ * We invert the bits here so that images and rasterized elements print correctly.
+ */
+function bitmapElement(x: number, y: number, bmp: MonochromeBitmap): CompiledElement {
+  const inverted = new Uint8Array(bmp.data.length);
+  for (let i = 0; i < bmp.data.length; i++) {
+    inverted[i] = ~bmp.data[i]! & 0xff;
+  }
+  return {
+    kind: "bitmap",
+    header: `BITMAP ${x},${y},${bmp.bytesPerRow},${bmp.height},0,`,
+    data: inverted,
+  };
+}
+
 function compileElement(
   el: LabelElement,
   font0Mode: "multiplier" | "points",
-): string {
+): CompiledElement {
   switch (el.type) {
     case "text": {
       const o = el.options;
@@ -73,15 +125,14 @@ function compileElement(
         cmd += `\nREVERSE ${x},${y},${w},${h}`;
       }
 
-      return cmd;
+      return { kind: "text", command: cmd };
     }
 
     case "image": {
       const o = el.options;
       const x = o.x ?? 0;
       const y = o.y ?? 0;
-      const bmp = el.bitmap;
-      return `BITMAP ${x},${y},${bmp.bytesPerRow},${bmp.height},0,`;
+      return bitmapElement(x, y, el.bitmap);
     }
 
     case "box": {
@@ -90,9 +141,9 @@ function compileElement(
       const y2 = o.y + o.height;
       const t = o.thickness ?? 1;
       if (o.radius) {
-        return `BOX ${o.x},${o.y},${x2},${y2},${t},${o.radius}`;
+        return { kind: "text", command: `BOX ${o.x},${o.y},${x2},${y2},${t},${o.radius}` };
       }
-      return `BOX ${o.x},${o.y},${x2},${y2},${t}`;
+      return { kind: "text", command: `BOX ${o.x},${o.y},${x2},${y2},${t}` };
     }
 
     case "line": {
@@ -100,35 +151,35 @@ function compileElement(
       const t = o.thickness ?? 1;
       if (o.y1 === o.y2) {
         const w = Math.abs(o.x2 - o.x1);
-        return `BAR ${Math.min(o.x1, o.x2)},${o.y1},${w},${t}`;
+        return { kind: "text", command: `BAR ${Math.min(o.x1, o.x2)},${o.y1},${w},${t}` };
       }
       if (o.x1 === o.x2) {
         const h = Math.abs(o.y2 - o.y1);
-        return `BAR ${o.x1},${Math.min(o.y1, o.y2)},${t},${h}`;
+        return { kind: "text", command: `BAR ${o.x1},${Math.min(o.y1, o.y2)},${t},${h}` };
       }
-      return `DIAGONAL ${o.x1},${o.y1},${o.x2},${o.y2},${t}`;
+      return { kind: "text", command: `DIAGONAL ${o.x1},${o.y1},${o.x2},${o.y2},${t}` };
     }
 
     case "circle": {
       const o = el.options;
       const t = o.thickness ?? 1;
-      return `CIRCLE ${o.x},${o.y},${o.diameter},${t}`;
+      return { kind: "text", command: `CIRCLE ${o.x},${o.y},${o.diameter},${t}` };
     }
 
     case "ellipse": {
       const o = el.options;
       const t = o.thickness ?? 1;
-      return `ELLIPSE ${o.x},${o.y},${o.width},${o.height},${t}`;
+      return { kind: "text", command: `ELLIPSE ${o.x},${o.y},${o.width},${o.height},${t}` };
     }
 
     case "reverse": {
       const o = el.options;
-      return `REVERSE ${o.x},${o.y},${o.width},${o.height}`;
+      return { kind: "text", command: `REVERSE ${o.x},${o.y},${o.width},${o.height}` };
     }
 
     case "erase": {
       const o = el.options;
-      return `ERASE ${o.x},${o.y},${o.width},${o.height}`;
+      return { kind: "text", command: `ERASE ${o.x},${o.y},${o.width},${o.height}` };
     }
 
     case "barcode": {
@@ -142,11 +193,11 @@ function compileElement(
         const rotation = o.rotation ?? 0;
         const narrow = o.moduleWidth ?? 2;
         const wide = narrow * (o.ratio ?? 2);
-        return `BARCODE ${x},${y},"128",${height},${readable},${rotation},${narrow},${wide},"${sanitizeTSCString(el.content)}"`;
+        return { kind: "text", command: `BARCODE ${x},${y},"128",${height},${readable},${rotation},${narrow},${wide},"${sanitizeTSCString(el.content)}"` };
       }
       // Non-native 1D → rasterize and emit as BITMAP
       const bitmap = rasterizeElement(el);
-      return `BITMAP ${x},${y},${bitmap.bytesPerRow},${bitmap.height},0,${bytesToTSC(bitmap.data)}`;
+      return bitmapElement(x, y, bitmap);
     }
 
     case "qrcode": {
@@ -158,7 +209,7 @@ function compileElement(
       const ecc = o.ecc ?? "H";
       const cellWidth = o.cellSize ?? 6;
       const rotation = o.rotation ?? 0;
-      return `QRCODE ${x},${y},${ecc},${cellWidth},A,${rotation},"${sanitizeTSCString(el.content)}"`;
+      return { kind: "text", command: `QRCODE ${x},${y},${ecc},${cellWidth},A,${rotation},"${sanitizeTSCString(el.content)}"` };
     }
 
     case "matrix": {
@@ -167,49 +218,67 @@ function compileElement(
       const x = o.x ?? 0;
       const y = o.y ?? 0;
       const bitmap = rasterizeElement(el);
-      return `BITMAP ${x},${y},${bitmap.bytesPerRow},${bitmap.height},0,${bytesToTSC(bitmap.data)}`;
+      return bitmapElement(x, y, bitmap);
     }
 
     case "raw":
-      return typeof el.content === "string" ? el.content : "";
+      if (typeof el.content === "string") {
+        return { kind: "text", command: el.content };
+      }
+      // Raw Uint8Array — will be spliced directly into the binary output.
+      return { kind: "bitmap", header: "", data: el.content };
   }
 }
 
 /**
- * Compile a resolved label to TSC/TSPL2 command string.
+ * Compile a resolved label to a `Uint8Array` ready to send to a TSC/TSPL2
+ * printer.  Text commands are UTF-8 encoded; BITMAP pixel data is emitted as
+ * raw binary bytes immediately after the command header.
+ *
  * Lines are joined with `\n` by default; pass `lineEnding: "\r\n"` if the
  * target printer firmware requires CRLF (some TSC drivers default to it).
  */
 export function compileToTSC(
   label: ResolvedLabel,
   options: { lineEnding?: "\n" | "\r\n" } = {},
-): string {
+): Uint8Array {
   const lineEnding = options.lineEnding ?? "\n";
-  const lines: string[] = [];
+  const le = strToBytes(lineEnding);
+  const chunks: Uint8Array[] = [];
   const dpi = label.dpi;
   const wMM = Math.round((label.widthDots / dpi) * 25.4);
   const hMM = label.heightDots > 0 ? Math.round((label.heightDots / dpi) * 25.4) : 0;
 
-  lines.push(`SIZE ${wMM} mm,${hMM} mm`);
+  const pushLine = (s: string) => { chunks.push(strToBytes(s)); chunks.push(le); };
+
+  pushLine(`SIZE ${wMM} mm,${hMM} mm`);
   if (label.gapDots != null && label.gapDots > 0) {
     const gMM = Math.round((label.gapDots / dpi) * 25.4);
-    lines.push(`GAP ${gMM} mm,0 mm`);
+    pushLine(`GAP ${gMM} mm,0 mm`);
   }
   if (label.speed != null) {
-    lines.push(`SPEED ${label.speed}`);
+    pushLine(`SPEED ${label.speed}`);
   }
   if (label.density != null) {
-    lines.push(`DENSITY ${label.density}`);
+    pushLine(`DENSITY ${label.density}`);
   }
   if (label.direction != null) {
-    lines.push(`DIRECTION ${label.direction}`);
+    pushLine(`DIRECTION ${label.direction}`);
   }
-  lines.push("CLS");
+  pushLine("CLS");
 
   for (const el of label.elements) {
-    lines.push(compileElement(el, label.font0Mode));
+    const compiled = compileElement(el, label.font0Mode);
+    if (compiled.kind === "text") {
+      pushLine(compiled.command);
+    } else {
+      // Bitmap: header text (with trailing comma) + raw binary + line ending
+      chunks.push(strToBytes(compiled.header));
+      chunks.push(compiled.data);
+      chunks.push(le);
+    }
   }
 
-  lines.push(`PRINT ${label.copies ?? 1}`);
-  return lines.join(lineEnding) + lineEnding;
+  pushLine(`PRINT ${label.copies ?? 1}`);
+  return concat(...chunks);
 }

@@ -2,16 +2,19 @@ import { describe, expect, it } from "vitest";
 import { label, tsc, zpl } from "../src/index.js";
 import { InvalidConfigError } from "../src/index.js";
 
+/** Decode Uint8Array to string for text-command assertions. */
+const decode = (buf: Uint8Array): string => new TextDecoder().decode(buf);
+
 describe("TSC native barcode/QR", () => {
   it("compiles code128 to TSC BARCODE", () => {
-    const out = tsc.compile(
+    const out = decode(tsc.compile(
       label({ width: 40, height: 30 }).barcode("123456789", { x: 10, y: 10 }),
-    );
+    ));
     expect(out).toContain('BARCODE 10,10,"128",80,1,0,2,4,"123456789"');
   });
 
   it("compiles code128 with options", () => {
-    const out = tsc.compile(
+    const out = decode(tsc.compile(
       label({ width: 40, height: 30 }).barcode("123456789", {
         x: 10,
         y: 10,
@@ -21,21 +24,21 @@ describe("TSC native barcode/QR", () => {
         rotation: 90,
         readable: false,
       }),
-    );
+    ));
     expect(out).toContain('BARCODE 10,10,"128",60,0,90,3,9,"123456789"');
   });
 
   it("compiles QR to TSC QRCODE", () => {
-    const out = tsc.compile(
+    const out = decode(tsc.compile(
       label({ width: 40, height: 30 }).qrcode("https://example.com", { x: 10, y: 10 }),
-    );
+    ));
     expect(out).toContain('QRCODE 10,10,H,6,A,0,"https://example.com"');
   });
 
   it("compiles QR with ecc/rotation", () => {
-    const out = tsc.compile(
+    const out = decode(tsc.compile(
       label({ width: 40, height: 30 }).qrcode("HI", { x: 5, y: 5, ecc: "M", rotation: 90 }),
-    );
+    ));
     expect(out).toContain('QRCODE 5,5,M,6,A,90,"HI"');
   });
 });
@@ -79,9 +82,9 @@ describe("ZPL native barcode/QR", () => {
 
 describe("Raster path (etiket symbologies)", () => {
   it("rasterizes ean13 to TSC BITMAP", () => {
-    const out = tsc.compile(
+    const out = decode(tsc.compile(
       label({ width: 40, height: 30 }).barcode("4006381333931", { x: 10, y: 10, symbology: "ean13" }),
-    );
+    ));
     expect(out).toMatch(/^BITMAP 10,10,\d+,\d+,0,/m);
   });
 
@@ -94,7 +97,7 @@ describe("Raster path (etiket symbologies)", () => {
 
   it("rasterizes datamatrix to both languages", () => {
     const b = label({ width: 40, height: 30 }).datamatrix("HELLO", { x: 10, y: 10, cellSize: 4 });
-    expect(tsc.compile(b)).toMatch(/^BITMAP 10,10,\d+,\d+,0,/m);
+    expect(decode(tsc.compile(b))).toMatch(/^BITMAP 10,10,\d+,\d+,0,/m);
     expect(zpl.compile(b)).toMatch(/^\^FO10,10\^GFA,\d+,\d+,\d+,[0-9A-F]+\^FS$/m);
   });
 
@@ -106,9 +109,9 @@ describe("Raster path (etiket symbologies)", () => {
   });
 
   it("rasterizes aztec to TSC BITMAP", () => {
-    const out = tsc.compile(
+    const out = decode(tsc.compile(
       label({ width: 40, height: 30 }).aztec("HELLO", { x: 10, y: 10, cellSize: 4 }),
-    );
+    ));
     expect(out).toMatch(/^BITMAP 10,10,\d+,\d+,0,/m);
   });
 
@@ -117,7 +120,7 @@ describe("Raster path (etiket symbologies)", () => {
       tsc.compile(
         label({ width: 40, height: 30 }).barcode("4006381333931", { symbology: "ean13" }),
       );
-    expect(build()).toBe(build());
+    expect(build()).toEqual(build());
   });
 });
 

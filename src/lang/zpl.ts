@@ -7,7 +7,7 @@
 import type { LabelBuilder } from "../builder.js";
 import type { LabelElement, ResolvedLabel } from "../types.js";
 import { compileToZPL } from "../languages/zpl.js";
-import { rasterizeElement } from "../raster.js";
+import { monochromeToSvgPath, rasterizeElement } from "../raster.js";
 
 /** ZPL font pixel dimensions at 203 DPI: { width, height } */
 const ZPL_FONTS: Record<string, { w: number; h: number }> = {
@@ -141,26 +141,18 @@ function renderElement(
       const baseline = round2(fs * zplBaselineRatio(o.font));
       const stretch = zplXStretch(o.font, o.size, o.xScale, font0Mode, dpi, fontBase, charWidthFactor);
 
-      // Text anchor for ^FB alignment. With maxWidth, anchor within that box.
-      // Without it, the template may have manually positioned text; `align`
-      // then anchors relative to the computed x.
-      // Offsets use UNSCALED widths: the inner text lives in the stretched
-      // frame, so its local coordinates must be pre-stretch values.
+      // With `maxWidth` (^FB) the printer aligns inside that box, so anchor
+      // within it too. Without it, `x` is already the aligned left edge — the
+      // printer has no alignment without ^FB — so draw from x directly;
+      // re-anchoring here double-corrects and shifts the text left.
       let anchor = "";
       let textX = 0;
-      const cw = fs * charWidthFactor;
       if (o.maxWidth && o.align === "center") {
         anchor = ' text-anchor="middle"';
         textX = round2((o.maxWidth / 2) / stretch);
       } else if (o.maxWidth && o.align === "right") {
         anchor = ' text-anchor="end"';
         textX = round2(o.maxWidth / stretch);
-      } else if (o.align === "center") {
-        anchor = ' text-anchor="middle"';
-        textX = round2((el.content.length * cw) / 2);
-      } else if (o.align === "right") {
-        anchor = ' text-anchor="end"';
-        textX = round2(el.content.length * cw);
       }
 
       const innerText =
@@ -176,23 +168,9 @@ function renderElement(
       const o = el.options;
       const x = o.x ?? 0;
       const y = o.y ?? 0;
-      const bmp = el.bitmap;
-      const w = o.width ?? bmp.width;
-      const h = o.height ?? bmp.height;
-      const step = Math.max(1, Math.floor(Math.max(bmp.width, bmp.height) / 100));
-      const sx = w / bmp.width;
-      const sy = h / bmp.height;
-      let svg = "";
-      for (let py = 0; py < bmp.height; py += step) {
-        for (let px = 0; px < bmp.width; px += step) {
-          const byteIdx = py * bmp.bytesPerRow + Math.floor(px / 8);
-          const bitIdx = 7 - (px % 8);
-          if ((bmp.data[byteIdx]! >> bitIdx) & 1) {
-            svg += `<rect x="${x + px * sx}" y="${y + py * sy}" width="${step * sx}" height="${step * sy}" fill="#000"/>`;
-          }
-        }
-      }
-      return svg;
+      // ^GFA prints the raster at its own pixel dimensions (no scaling) — draw
+      // the preview 1:1 at x,y rather than stretching it to the cell.
+      return `<g transform="translate(${x}, ${y})"><path d="${monochromeToSvgPath(el.bitmap)}" fill="#000"/></g>`;
     }
 
     case "box": {

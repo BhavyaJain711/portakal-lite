@@ -5,7 +5,7 @@ Integrates [etiket](https://github.com/productdevbook/etiket) package for seamle
 
 - Fluent `label()` builder — text, boxes, lines, circles, ellipses, reverse/erase regions, images, raw commands
 - `.barcode()` / `.qrcode()` — 40+ symbologies via [etiket](https://github.com/productdevbook/etiket)
-- `tsc.compile()` / `zpl.compile()` → **printer-ready string** (no transport, no connection — you send it)
+- `tsc.compile()` / `zpl.compile()` → **printer-ready output** — TSC as a `Uint8Array` (binary bitmap payload), ZPL as a string. No transport, no connection — you send it.
 - `tsc.preview()` / `zpl.preview()` → SVG rendering with per-language font metrics
 - Receipt layout helpers: `formatPair`, `formatRow`, `formatTable`, `separator`, `wordWrap`
 - One runtime dependency (`etiket`, itself zero-dep), pure ESM, works in Node, browsers, Deno, Bun
@@ -72,25 +72,59 @@ Barcode options: `x`, `y`, `height`, `moduleWidth`, `ratio`, `rotation`, `readab
 
 QR options: `x`, `y`, `cellSize`, `ecc` (`L`/`M`/`Q`/`H`), `rotation`, `version`, `mode`, `mask`, `eci`, `gs1`.
 
-### Send the compiled file to a printer
+### Sending to a printer
 
-The package only produces the string — wire it to your printer however you like:
+`tsc.compile()` returns a **`Uint8Array`**, not a string: the text commands are
+ASCII, but a `BITMAP` payload is raw packed pixels. Send those bytes as-is — the
+compiler has already concatenated the whole stream for you. `zpl.compile()`
+returns a string (ZPL has no binary payload).
 
 ```ts
 import { label, tsc } from "portakal-lite";
 import net from "node:net";
 
-const commands = tsc.compile(
+const bytes = tsc.compile(
   label({ width: 40, height: 30 }).text("Hello", { x: 10, y: 10 }),
 );
 
 // TCP label printers usually listen on port 9100
 const socket = net.createConnection({ host: "192.168.1.100", port: 9100 });
-socket.write(commands);
+socket.write(bytes);
 socket.end();
 
 // ...or write to a file for a print spooler
-// fs.writeFileSync("label.prn", commands);
+// fs.writeFileSync("label.prn", bytes);
+```
+
+Do **not** decode the output to text before sending. `new TextDecoder().decode(bytes)`,
+`String.fromCharCode(...bytes)`, `bytes.toString()` and `JSON.stringify(bytes)` all
+mangle bytes ≥ `0x80` and change the total length, so the printer reads the wrong
+byte count — images print as noise, while text-only labels still look fine
+because those bytes are pure ASCII.
+
+For HTTP, post the bytes directly (no encoding needed):
+
+```ts
+await fetch("/print", {
+  method: "POST",
+  headers: { "Content-Type": "application/octet-stream" },
+  body: bytes, // React Native: new Blob([bytes], { type: "application/octet-stream" })
+});
+```
+
+If a transport only accepts a `string` (some BLE and Expo bridges), wrap the
+bytes losslessly with base64 and let the transport decode them:
+
+```ts
+import { bytesToBase64, chunkBytes } from "portakal-lite";
+
+await ble.write(deviceId, characteristicId, bytesToBase64(bytes));
+
+// MTU-limited link? Split the BYTES, then encode each chunk — never split
+// an encoded string.
+for (const chunk of chunkBytes(bytes, 180)) {
+  await ble.write(deviceId, characteristicId, bytesToBase64(chunk));
+}
 ```
 
 TSC output uses LF (`\n`) line endings by default. If your printer firmware
@@ -101,6 +135,21 @@ argument to `tsc.compile()`):
 const commands = tsc.compile(
   label({ width: 40, height: 30, lineEnding: "\r\n" }).text("Hello", { x: 10, y: 10 }),
 );
+```
+
+### Showing the output
+
+`formatTSCBytes` (or `tsc.text(builder)`) renders the stream for display — ASCII
+commands verbatim, with any binary `BITMAP` payload elided. Use it for a UI, a
+log, or a "show compiled commands" panel; never send it in place of the bytes.
+
+```ts
+import { formatTSCBytes, tsc } from "portakal-lite";
+
+formatTSCBytes(bytes);
+// 'SIZE 40 mm,30 mm\nCLS\nTEXT 10,10,"2",0,1,1,"Hello"\nPRINT 1\n'
+
+tsc.text(builder); // an image label shows: '… BITMAP 10,10,2,16,0,<32 bytes of bitmap data>\nPRINT 1\n'
 ```
 
 ### Receipt-style aligned lines
@@ -150,6 +199,29 @@ const b = label({ width: 40, height: 30 })
 
 `MonochromeBitmap` is a 1-bit packed `Uint8Array`: `{ data, width, height, bytesPerRow }` with `bytesPerRow === Math.ceil(width / 8)`.
 
+### Images
+
+Raster graphics need packed 1-bit pixels. `toMonochromeBitmap` converts raw
+grayscale or RGB/RGBA pixels (e.g. a decoded photo) into that shape, with
+threshold or error-diffusion dithering:
+
+```ts
+import { label, tsc, toMonochromeBitmap } from "portakal-lite";
+
+// pixels: row-major, 1 (grayscale), 3 (RGB) or 4 (RGBA) bytes per pixel.
+const bitmap = toMonochromeBitmap(pixels, width, height, {
+  dither: "floyd-steinberg", // "threshold" | "floyd-steinberg" | "atkinson" | "ordered"
+  threshold: 128,            // luminance cutoff (default 128)
+  invert: false,
+});
+
+const myLabel = label({ width: 40, height: 30 }).image(bitmap, { x: 20, y: 60 });
+```
+
+RGBA is composited over white, so transparent areas print as unmarked paper.
+Note that TSC `BITMAP` cannot scale — emit the bitmap at the size you want
+printed (ZPL `^GFA` is fixed-size too). See [`examples/image-label.js`](./examples/image-label.js).
+
 ## Examples
 
 Runnable examples live in [`examples/`](./examples) — build the package first (`npm run build`), then run any:
@@ -159,6 +231,7 @@ node examples/basic-label.js         # text + box + Code 128 + QR, both language
 node examples/shipping-label.js   # shipping label with tracking barcode + QR
 node examples/receipt-label.js    # receipt-style label with order barcode
 node examples/max-symbologies.js  # native + rasterized (EAN-13, UPC-A, Code 39, ITF, DataMatrix, PDF417, Aztec)
+node examples/image-label.js      # dithered bitmap image (BITMAP / ^GFA)
 ```
 
 ## Security
@@ -177,7 +250,7 @@ The compilers are hardened against command injection — the most important thin
 
 ## Differences from portakal
 
-`portakal-lite` keeps the label builder, TSC/ZPL compilers, per-language preview, receipt helpers, and adds barcode/QR support backed by etiket. It drops the other 7 languages, parsers, `validate()`, cross-compiler, image dithering, encoding engine, and the transport layer. Behavior of the generated TSC/ZPL commands is identical to portakal's, plus the hardening above.
+`portakal-lite` keeps the label builder, TSC/ZPL compilers, per-language preview, receipt helpers, and adds barcode/QR support backed by etiket plus image dithering via `toMonochromeBitmap()`. It drops the other 7 languages, parsers, `validate()`, cross-compiler, encoding engine, and the transport layer. Behavior of the generated TSC/ZPL commands is identical to portakal's, plus the hardening above.
 
 ## License
 

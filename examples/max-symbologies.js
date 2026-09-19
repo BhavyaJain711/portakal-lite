@@ -4,7 +4,7 @@
  * print via etiket. Code 128 and QR use printer-native commands; everything
  * else is rasterized into TSC BITMAP / ZPL ^GFA graphics (real, scannable).
  */
-import { label, tsc, zpl } from "../dist/index.js";
+import { label, tsc, zpl } from "../dist/index.mjs";
 
 // Printer-native: Code 128 + QR
 const native = label({ width: 40, height: 30 })

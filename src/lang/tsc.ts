@@ -8,7 +8,8 @@ import type { LabelBuilder } from "../builder.js";
 import type { LabelElement, ResolvedLabel } from "../types.js";
 import { TSC_DOT_FONTS } from "../types.js";
 import { compileToTSC } from "../languages/tsc.js";
-import { rasterizeElement } from "../raster.js";
+import { monochromeToSvgPath, rasterizeElement } from "../raster.js";
+import { formatTSCBytes } from "../tsctext.js";
 
 /** TSC font pixel dimensions: shared table (fonts 1–8 fixed-pitch). */
 const TSC_FONTS: Record<string, { w: number; h: number }> = TSC_DOT_FONTS;
@@ -44,25 +45,6 @@ function tscFontSize(
   // Font "0" (scalable): size unit follows the printer's font0Mode.
   if (font0Mode === "points") return round2((size ?? 12) * (dpi / 72));
   return fontBase.height * (size ?? 1);
-}
-
-/** Char width with the glyphs NOT x-stretched (unscaled local frame). Used for alignment. */
-function tscCharWidthUnscaled(
-  font: string | undefined,
-  size: number | undefined,
-  font0Mode: "multiplier" | "points",
-  dpi: number,
-  fontBase: { width: number; height: number },
-  charWidthFactor: number,
-): number {
-  const f = TSC_FONTS[font ?? "2"];
-  if (f) {
-    // Fixed-pitch fonts: the SVG monospace char width is used (same as
-    // svgCharWidth in tscXStretch) so alignment stays consistent.
-    return tscFontSize(font, size, size, font0Mode, dpi, fontBase) * SVG_MONO_WIDTH_FACTOR;
-  }
-  // Font "0" (scalable): use the printer's charWidthFactor.
-  return tscFontSize(font, size, size, font0Mode, dpi, fontBase) * charWidthFactor;
 }
 
 /** Horizontal glyph stretch for the preview: desired printer char width ÷ SVG monospace char width. */
@@ -107,16 +89,18 @@ function renderElement(
       const y = o.y ?? 0;
       const charWidthFactor = o.charWidthFactor ?? defaultCharWidthFactor;
       const fs = round2(tscFontSize(o.font, o.size, o.yScale, font0Mode, dpi, fontBase));
-      const cw = tscCharWidthUnscaled(o.font, o.size, font0Mode, dpi, fontBase, charWidthFactor);
+      // Rendered glyph width in the local (pre-stretch) frame. The SVG always
+      // draws monospace, so this is the browser's advance — not the printer's
+      // charWidthFactor estimate.
+      const cw = fs * SVG_MONO_WIDTH_FACTOR;
       const stretch = tscXStretch(o.font, o.size, o.xScale, font0Mode, dpi, fontBase, charWidthFactor);
       const weight = o.bold ? "bold" : "normal";
       const rot = o.rotation ? ` rotate(${o.rotation} ${x} ${y})` : "";
 
-      // Text anchor for alignment. When maxWidth is set (BLOCK), anchor within
-      // that box. When the template manually positioned text (no maxWidth),
-      // `align` tells the preview to anchor relative to the computed x.
-      // All offsets use the UNSCALED char width: the inner text lives in the
-      // stretched frame, so its local coordinates must be pre-stretch values.
+      // With `maxWidth` (BLOCK) the printer aligns inside that box, so anchor
+      // within it too. Without it, `x` is already the aligned left edge — the
+      // printer has no alignment without BLOCK — so draw from x directly;
+      // re-anchoring here double-corrects and shifts the text left.
       let anchor = "";
       let textX = 0;
       if (o.maxWidth && o.align === "center") {
@@ -125,15 +109,6 @@ function renderElement(
       } else if (o.maxWidth && o.align === "right") {
         anchor = ' text-anchor="end"';
         textX = round2(o.maxWidth / stretch);
-      } else if (o.align === "center") {
-        // Template-computed center: x is the left edge of the centered text.
-        // Local center of the stretched text = (n × cw × stretch) / 2, and in
-        // the local frame that's (n × cw) / 2.
-        anchor = ' text-anchor="middle"';
-        textX = round2((el.content.length * cw) / 2);
-      } else if (o.align === "right") {
-        anchor = ' text-anchor="end"';
-        textX = round2(el.content.length * cw);
       }
 
       const baseline = round2(fs * 0.85);
@@ -156,23 +131,10 @@ function renderElement(
       const o = el.options;
       const x = o.x ?? 0;
       const y = o.y ?? 0;
-      const bmp = el.bitmap;
-      const w = o.width ?? bmp.width;
-      const h = o.height ?? bmp.height;
-      const step = Math.max(1, Math.floor(Math.max(bmp.width, bmp.height) / 100));
-      const sx = w / bmp.width;
-      const sy = h / bmp.height;
-      let svg = "";
-      for (let py = 0; py < bmp.height; py += step) {
-        for (let px = 0; px < bmp.width; px += step) {
-          const byteIdx = py * bmp.bytesPerRow + Math.floor(px / 8);
-          const bitIdx = 7 - (px % 8);
-          if ((bmp.data[byteIdx]! >> bitIdx) & 1) {
-            svg += `<rect x="${x + px * sx}" y="${y + py * sy}" width="${step * sx}" height="${step * sy}" fill="#000"/>`;
-          }
-        }
-      }
-      return svg;
+      // BITMAP prints the raster at its own pixel dimensions — there is no
+      // scaling — so the preview must not stretch it to the cell bounds.
+      // Draw it 1:1 at x,y as one path (cheap to parse, faithful to the print).
+      return `<g transform="translate(${x}, ${y})"><path d="${monochromeToSvgPath(el.bitmap)}" fill="#000"/></g>`;
     }
 
     case "box": {
@@ -286,10 +248,18 @@ function renderPreviewSVG(resolved: ResolvedLabel): string {
 
 /** TSC language module */
 export const tsc = {
-  /** Compile label to TSC/TSPL2 commands */
-  compile(builder: LabelBuilder): string {
+  /** Compile label to TSC/TSPL2 binary (Uint8Array with raw BITMAP data) */
+  compile(builder: LabelBuilder): Uint8Array {
     const resolved = builder.resolve();
     return compileToTSC(resolved, { lineEnding: resolved.lineEnding });
+  },
+
+  /**
+   * Render the compiled stream for display: ASCII commands with any BITMAP
+   * payload elided. Show this; send `compile()`.
+   */
+  text(builder: LabelBuilder): string {
+    return formatTSCBytes(tsc.compile(builder));
   },
 
   /** Render label preview with TSC-specific font metrics */

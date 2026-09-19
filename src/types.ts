@@ -196,7 +196,7 @@ export interface CircleOptions {
 
 /** 1-bit monochrome bitmap (universal intermediate format for images) */
 export interface MonochromeBitmap {
-  /** Packed 1-bit pixel data, row-major, MSB-first */
+  /** Packed 1-bit pixel data, row-major, MSB-first. Bit 1 = black, 0 = white. */
   data: Uint8Array;
   /** Width in pixels */
   width: number;

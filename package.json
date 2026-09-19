@@ -1,6 +1,6 @@
 {
   "name": "portakal-lite",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Standalone TSC/TSPL2 + ZPL II label compiler with SVG preview and receipt layout helpers. Zero dependencies, no transport layer — you get a printer-ready string.",
   "keywords": [
     "printer",
