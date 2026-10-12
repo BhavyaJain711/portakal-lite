@@ -225,17 +225,10 @@ function renderElement(
       const x = o.x ?? 0;
       const y = o.y ?? 0;
       const bmp = rasterizeElement(el);
-      const step = Math.max(1, Math.floor(Math.max(bmp.width, bmp.height) / 100));
-      let svg = "";
-      for (let py = 0; py < bmp.height; py += step) {
-        for (let px = 0; px < bmp.width; px += step) {
-          const byteIdx = py * bmp.bytesPerRow + Math.floor(px / 8);
-          const bitIdx = 7 - (px % 8);
-          if ((bmp.data[byteIdx]! >> bitIdx) & 1) {
-            svg += `<rect x="${x + px}" y="${y + py}" width="${step}" height="${step}" fill="#000"/>`;
-          }
-        }
-      }
+      // Draw the raster as one <path>: a <rect> per black dot emitted thousands
+      // of nodes (a 1D barcode is ~3k at 1x1), which locks up react-native-svg
+      // on every preview render. One path is a few hundred runs instead.
+      let svg = `<g transform="translate(${x}, ${y})"><path d="${monochromeToSvgPath(bmp)}" fill="#000"/></g>`;
       // Human-readable text below the symbol (matches printer behavior).
       const content = el.type === "barcode" || el.type === "qrcode" ? el.content : "";
       const showText =

@@ -296,7 +296,10 @@ export function monochromeToSvgPath(
     return total > 0 && black * 2 >= total;
   };
 
-  let path = "";
+  // Collect runs and join once: `path += …` per run is O(n²) on Hermes (it
+  // copies the whole string every time), which is what made a large bitmap
+  // take seconds instead of milliseconds to render.
+  const runs: string[] = [];
   for (let oy = 0; oy < outH; oy++) {
     let ox = 0;
     while (ox < outW) {
@@ -306,9 +309,9 @@ export function monochromeToSvgPath(
       }
       let run = 0;
       while (ox + run < outW && isCovered(ox + run, oy)) run++;
-      path += `M${ox * factor} ${oy * factor}h${run * factor}v${factor}H${ox * factor}z`;
+      runs.push(`M${ox * factor} ${oy * factor}h${run * factor}v${factor}H${ox * factor}z`);
       ox += run;
     }
   }
-  return path;
+  return runs.join("");
 }
